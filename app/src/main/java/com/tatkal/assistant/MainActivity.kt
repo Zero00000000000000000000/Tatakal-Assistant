@@ -199,10 +199,10 @@ class MainActivity : Activity() {
     private fun registerSmsConsentReceiver() {
         val filter = IntentFilter(SmsRetriever.SMS_RETRIEVED_ACTION)
         if (android.os.Build.VERSION.SDK_INT >= 33) {
-            registerReceiver(smsConsentReceiver, filter, Context.RECEIVER_EXPORTED)
+            registerReceiver(smsConsentReceiver, filter, SmsRetriever.SEND_PERMISSION, null, Context.RECEIVER_EXPORTED)
         } else {
             @Suppress("DEPRECATION")
-            registerReceiver(smsConsentReceiver, filter)
+            registerReceiver(smsConsentReceiver, filter, SmsRetriever.SEND_PERMISSION, null)
         }
         smsReceiverRegistered = true
     }
