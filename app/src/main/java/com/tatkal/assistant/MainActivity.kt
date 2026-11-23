@@ -1,46 +1,37 @@
 package com.tatkal.assistant
 
-import android.annotation.SuppressLint
 import android.app.Activity
-import android.content.Context
 import android.content.BroadcastReceiver
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.graphics.Color
+import android.net.Uri
 import android.os.Bundle
 import android.view.Gravity
-import android.view.View
-import android.view.inputmethod.InputMethodManager
-import android.webkit.CookieManager
-import android.webkit.WebChromeClient
-import android.webkit.WebResourceRequest
-import android.webkit.WebSettings
-import android.webkit.WebView
-import android.webkit.WebViewClient
-import com.google.android.gms.auth.api.phone.SmsRetriever
-import com.google.android.gms.common.api.CommonStatusCodes
 import android.widget.Button
 import android.widget.EditText
 import android.widget.LinearLayout
-import android.widget.ProgressBar
 import android.widget.TextView
 import android.widget.Toast
-import org.json.JSONObject
+import com.google.android.gms.auth.api.phone.SmsRetriever
+import com.google.android.gms.common.api.CommonStatusCodes
 
 /**
- * Lightweight IRCTC companion browser.
- * User-triggered form assistance only; CAPTCHA, OTP, login, booking and payment
- * remain on the official site and are completed by the user.
+ * Lightweight IRCTC journey helper.
+ * IRCTC opens in Chrome/the system browser, not an embedded WebView.
+ * Journey details and OTP are copied only after the user taps the relevant control.
  */
 class MainActivity : Activity() {
-    private lateinit var browser: WebView
-    private lateinit var progress: ProgressBar
     private lateinit var from: EditText
     private lateinit var to: EditText
     private lateinit var date: EditText
     private lateinit var train: EditText
     private val prefs by lazy { getSharedPreferences("journey_profile", MODE_PRIVATE) }
     private var smsReceiverRegistered = false
+
     private val smsConsentReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
             if (intent.action != SmsRetriever.SMS_RETRIEVED_ACTION) return
@@ -54,118 +45,107 @@ class MainActivity : Activity() {
                         startActivityForResult(consentIntent, SMS_CONSENT_REQUEST)
                     }
                 }
-                CommonStatusCodes.TIMEOUT -> Toast.makeText(this@MainActivity, "OTP listening timed out. Tap OTP assist to try again.", Toast.LENGTH_LONG).show()
+                CommonStatusCodes.TIMEOUT ->
+                    Toast.makeText(this@MainActivity, "OTP listening timed out. Tap OTP assist to try again.", Toast.LENGTH_LONG).show()
             }
         }
     }
 
-    @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         window.statusBarColor = Color.rgb(157, 22, 40)
         window.navigationBarColor = Color.WHITE
-        CookieManager.getInstance().setAcceptCookie(true)
         registerSmsConsentReceiver()
 
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
+            setPadding(dp(14), dp(12), dp(14), dp(12))
             setBackgroundColor(Color.rgb(247, 248, 250))
         }
+
         val header = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(14), dp(8), dp(10), dp(8))
+            setPadding(dp(12), dp(10), dp(8), dp(10))
             setBackgroundColor(Color.rgb(157, 22, 40))
         }
         header.addView(TextView(this).apply {
             text = "TATKAL LITE"
             textSize = 18f
             setTextColor(Color.WHITE)
-        }, LinearLayout.LayoutParams(0, dp(44), 1f))
-        header.addView(topButton("IRCTC") { browser.loadUrl(IRCTC_URL) })
-        header.addView(topButton("Back") { if (browser.canGoBack()) browser.goBack() })
-        header.addView(topButton("Reload") { browser.reload() })
+        }, LinearLayout.LayoutParams(0, dp(48), 1f))
+        header.addView(actionButton("Open Chrome") { openIrctcInChrome() }.apply {
+            setTextColor(Color.WHITE)
+        })
         root.addView(header)
 
-        progress = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
-            isIndeterminate = true
-            visibility = View.GONE
-        }
-        root.addView(progress, LinearLayout.LayoutParams(-1, dp(3)))
+        root.addView(TextView(this).apply {
+            text = "Journey details"
+            textSize = 17f
+            setTextColor(Color.BLACK)
+            setPadding(dp(4), dp(18), dp(4), dp(6))
+        })
 
-        val panel = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(9), dp(3), dp(9), dp(4))
-            setBackgroundColor(Color.WHITE)
-        }
         val first = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         from = field("From station / code")
         to = field("To station / code")
         first.addView(from, weightParams())
         first.addView(to, weightParams())
-        panel.addView(first)
+        root.addView(first)
 
         val second = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        date = field("Journey date")
+        date = field("Journey date (DD-MM-YYYY)")
         train = field("Train no. (optional)")
         second.addView(date, weightParams())
         second.addView(train, weightParams())
-        panel.addView(second)
+        root.addView(second)
 
-        val controls = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        controls.addView(panelButton("Save") { saveProfile() }, weightParams())
-        controls.addView(panelButton("Fill page") { fillVisibleFields() }, weightParams())
-        controls.addView(panelButton("Open site") { browser.loadUrl(IRCTC_URL) }, weightParams())
-        controls.addView(panelButton("OTP assist") { startOtpListening() }, weightParams())
-        panel.addView(controls)
-        root.addView(panel)
+        val controls = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setPadding(0, dp(8), 0, 0)
+        }
+        controls.addView(actionButton("Save") { saveProfile() }, weightParams())
+        controls.addView(actionButton("Copy details") { copyJourneyDetails() }, weightParams())
+        controls.addView(actionButton("OTP assist") { startOtpListening() }, weightParams())
+        root.addView(controls)
 
-        browser = WebView(this).apply { setBackgroundColor(Color.WHITE) }
-        browser.settings.apply {
-            javaScriptEnabled = true
-            domStorageEnabled = true
-            loadsImagesAutomatically = true
-            blockNetworkImage = false // Do not break CAPTCHA/image verification.
-            cacheMode = WebSettings.LOAD_DEFAULT
-            setSupportZoom(false)
-            builtInZoomControls = false
-            displayZoomControls = false
-            javaScriptCanOpenWindowsAutomatically = false
-            mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
-            allowFileAccess = false
-            allowContentAccess = false
-        }
-        CookieManager.getInstance().setAcceptThirdPartyCookies(browser, false)
-        browser.webChromeClient = WebChromeClient()
-        browser.webViewClient = object : WebViewClient() {
-            override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
-                val host = request.url.host?.lowercase() ?: return true
-                return !(host == "irctc.co.in" || host.endsWith(".irctc.co.in"))
-            }
-            override fun onPageStarted(view: WebView, url: String, favicon: android.graphics.Bitmap?) {
-                progress.visibility = View.VISIBLE
-            }
-            override fun onPageFinished(view: WebView, url: String) {
-                progress.visibility = View.GONE
-                // Only hide explicitly promotional elements. CAPTCHA, form and other
-                // functional images are deliberately left untouched.
-                view.evaluateJavascript("""(function(){
-                    var s=document.getElementById('tatkal-lite-style');
-                    if(!s){s=document.createElement('style');s.id='tatkal-lite-style';
-                    s.textContent='.advertisement,.promo-banner,.marketing-banner{display:none!important}';
-                    document.head.appendChild(s);}
-                })();""", null)
-            }
-        }
-        root.addView(browser, LinearLayout.LayoutParams(-1, 0, 1f))
+        root.addView(TextView(this).apply {
+            text = "IRCTC opens in Chrome to avoid embedded-browser access errors. Save or copy your journey details here, then enter them on the official IRCTC site. OTP assist copies the code only after you approve Google's SMS consent prompt."
+            textSize = 13f
+            setTextColor(Color.DKGRAY)
+            setPadding(dp(6), dp(18), dp(6), dp(8))
+        })
+
+        root.addView(actionButton("OPEN OFFICIAL IRCTC WEBSITE") { openIrctcInChrome() }.apply {
+            textSize = 15f
+            setTextColor(Color.WHITE)
+            setBackgroundColor(Color.rgb(157, 22, 40))
+        }, LinearLayout.LayoutParams(-1, dp(52)).apply {
+            setMargins(0, dp(12), 0, 0)
+        })
+
         setContentView(root)
 
         from.setText(prefs.getString("from", ""))
         to.setText(prefs.getString("to", ""))
         date.setText(prefs.getString("date", ""))
         train.setText(prefs.getString("train", ""))
-        if (savedInstanceState == null) browser.loadUrl(IRCTC_URL)
-        else browser.restoreState(savedInstanceState)
+    }
+
+    private fun openIrctcInChrome() {
+        val uri = Uri.parse(IRCTC_URL)
+        val chromeIntent = Intent(Intent.ACTION_VIEW, uri).apply {
+            setPackage(CHROME_PACKAGE)
+        }
+        try {
+            startActivity(chromeIntent)
+        } catch (_: android.content.ActivityNotFoundException) {
+            try {
+                startActivity(Intent(Intent.ACTION_VIEW, uri))
+            } catch (_: Exception) {
+                Toast.makeText(this, "No browser is available. Install or enable Chrome.", Toast.LENGTH_LONG).show()
+            }
+        }
     }
 
     private fun field(hintText: String) = EditText(this).apply {
@@ -175,25 +155,42 @@ class MainActivity : Activity() {
         setPadding(dp(7), 0, dp(7), 0)
     }
 
-    private fun weightParams() = LinearLayout.LayoutParams(0, dp(43), 1f).apply {
-        setMargins(dp(2), 0, dp(2), 0)
+    private fun weightParams() = LinearLayout.LayoutParams(0, dp(46), 1f).apply {
+        setMargins(dp(3), dp(3), dp(3), dp(3))
     }
 
-    private fun topButton(label: String, action: () -> Unit) = Button(this).apply {
+    private fun actionButton(label: String, action: () -> Unit) = Button(this).apply {
         text = label
-        textSize = 10f
+        textSize = 11f
         isAllCaps = false
-        setTextColor(Color.WHITE)
         setPadding(dp(3), 0, dp(3), 0)
         setOnClickListener { action() }
     }
 
-    private fun panelButton(label: String, action: () -> Unit) = Button(this).apply {
-        text = label
-        textSize = 11f
-        isAllCaps = false
-        setPadding(dp(2), 0, dp(2), 0)
-        setOnClickListener { action() }
+    private fun saveProfile() {
+        prefs.edit()
+            .putString("from", from.text.toString().trim())
+            .putString("to", to.text.toString().trim())
+            .putString("date", date.text.toString().trim())
+            .putString("train", train.text.toString().trim())
+            .apply()
+        Toast.makeText(this, "Journey details saved on this device", Toast.LENGTH_SHORT).show()
+    }
+
+    private fun copyJourneyDetails() {
+        val lines = listOf(
+            "From: ${from.text.toString().trim()}",
+            "To: ${to.text.toString().trim()}",
+            "Journey date: ${date.text.toString().trim()}",
+            "Train: ${train.text.toString().trim()}"
+        ).filterNot { it.substringAfter(": ").isBlank() }
+        if (lines.isEmpty()) {
+            Toast.makeText(this, "Enter journey details first.", Toast.LENGTH_SHORT).show()
+            return
+        }
+        val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+        clipboard.setPrimaryClip(ClipData.newPlainText("Journey details", lines.joinToString("\n")))
+        Toast.makeText(this, "Journey details copied. Paste them in Chrome as needed.", Toast.LENGTH_LONG).show()
     }
 
     private fun registerSmsConsentReceiver() {
@@ -227,87 +224,9 @@ class MainActivity : Activity() {
             Toast.makeText(this, "No clear OTP found. Please enter it manually.", Toast.LENGTH_LONG).show()
             return
         }
-        val js = """
-            (function(value) {
-              var fields = Array.from(document.querySelectorAll('input'))
-                .filter(function(el) {
-                  if (el.disabled || el.readOnly || !el.offsetParent) return false;
-                  var k = ((el.name||'')+' '+(el.id||'')+' '+(el.placeholder||'')+' '+(el.getAttribute('aria-label')||'')+' '+(el.autocomplete||'')).toLowerCase();
-                  return /otp|one.?time|verification.?code/.test(k) || (el.maxLength >= 4 && el.maxLength <= 8 && /number|tel|text/.test(el.type));
-                });
-              if (!fields.length) return false;
-              var el = fields[0], proto = Object.getPrototypeOf(el), desc = Object.getOwnPropertyDescriptor(proto,'value');
-              if (desc && desc.set) desc.set.call(el,value); else el.value=value;
-              el.dispatchEvent(new Event('input',{bubbles:true}));
-              el.dispatchEvent(new Event('change',{bubbles:true}));
-              el.focus();
-              return true;
-            })(${JSONObject.quote(otp)});
-        """.trimIndent()
-        browser.evaluateJavascript(js) { result ->
-            val filled = result == "true"
-            Toast.makeText(this, if (filled) "OTP filled. Review and submit it yourself." else "OTP received with your approval, but no OTP field was found. Enter it manually.", Toast.LENGTH_LONG).show()
-        }
-    }
-
-    private fun saveProfile() {
-        prefs.edit()
-            .putString("from", from.text.toString())
-            .putString("to", to.text.toString())
-            .putString("date", date.text.toString())
-            .putString("train", train.text.toString())
-            .apply()
-        Toast.makeText(this, "Journey details saved on this device", Toast.LENGTH_SHORT).show()
-    }
-
-    private fun fillVisibleFields() {
-        val data = JSONObject().apply {
-            put("from", from.text.toString())
-            put("to", to.text.toString())
-            put("date", date.text.toString())
-            put("train", train.text.toString())
-        }
-        val script = """
-          (function(d) {
-            function set(el, value) {
-              if (!el || !value || el.disabled || el.readOnly) return false;
-              var key=((el.name||'')+' '+(el.id||'')+' '+(el.placeholder||'')+' '+(el.getAttribute('aria-label')||'')).toLowerCase();
-              if (/captcha|security|verification|otp|password|payment|card|cvv/.test(key)) return false;
-              var proto=Object.getPrototypeOf(el);
-              var desc=Object.getOwnPropertyDescriptor(proto,'value');
-              if(desc && desc.set) desc.set.call(el,value); else el.value=value;
-              el.dispatchEvent(new Event('input',{bubbles:true}));
-              el.dispatchEvent(new Event('change',{bubbles:true}));
-              return true;
-            }
-            var count=0;
-            Array.from(document.querySelectorAll('input:not([type=hidden]),textarea')).forEach(function(el){
-              var k=((el.name||'')+' '+(el.id||'')+' '+(el.placeholder||'')+' '+(el.getAttribute('aria-label')||'')).toLowerCase();
-              if(/captcha|otp|password|payment|card|cvv|email|mobile|phone/.test(k)) return;
-              if(/from|origin|source/.test(k)) {if(set(el,d.from)) count++;}
-              else if(/to|destination|dest/.test(k)) {if(set(el,d.to)) count++;}
-              else if(/journey.?date|date/.test(k)) {if(set(el,d.date)) count++;}
-              else if(/train/.test(k)) {if(set(el,d.train)) count++;}
-            });
-            return count;
-          })(${data});
-        """.trimIndent()
-        browser.evaluateJavascript(script) { result ->
-            val count = result?.trim('"')?.toIntOrNull() ?: 0
-            Toast.makeText(this, if (count > 0) "$count field(s) filled. Please review them." else "No matching fields found. Fill manually.", Toast.LENGTH_LONG).show()
-        }
-        (getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager)
-            .hideSoftInputFromWindow(browser.windowToken, 0)
-    }
-
-    override fun onSaveInstanceState(outState: Bundle) {
-        browser.saveState(outState)
-        super.onSaveInstanceState(outState)
-    }
-
-    @Deprecated("Deprecated in Android API")
-    override fun onBackPressed() {
-        if (::browser.isInitialized && browser.canGoBack()) browser.goBack() else super.onBackPressed()
+        val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+        clipboard.setPrimaryClip(ClipData.newPlainText("OTP", otp))
+        Toast.makeText(this, "OTP copied after your approval. Paste it into IRCTC yourself.", Toast.LENGTH_LONG).show()
     }
 
     override fun onDestroy() {
@@ -315,14 +234,14 @@ class MainActivity : Activity() {
             try { unregisterReceiver(smsConsentReceiver) } catch (_: IllegalArgumentException) { }
             smsReceiverRegistered = false
         }
-        if (::browser.isInitialized) browser.destroy()
         super.onDestroy()
     }
 
-    private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
+    private fun dp(value: Int) = (value * resources.displayMetrics.density).toInt()
 
     companion object {
         private const val IRCTC_URL = "https://www.irctc.co.in/nget/train-search"
+        private const val CHROME_PACKAGE = "com.android.chrome"
         private const val SMS_CONSENT_REQUEST = 4102
     }
 }
