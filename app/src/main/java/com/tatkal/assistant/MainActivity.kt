@@ -1,246 +1,244 @@
 package com.tatkal.assistant
 
+import android.annotation.SuppressLint
 import android.app.Activity
-import android.content.ClipData
-import android.content.ClipboardManager
 import android.content.Context
-import android.content.Intent
-import android.content.res.ColorStateList
 import android.graphics.Color
-import android.graphics.Typeface
-import android.graphics.drawable.GradientDrawable
-import android.net.Uri
 import android.os.Bundle
 import android.view.Gravity
-import android.view.ViewGroup
+import android.view.View
+import android.view.inputmethod.InputMethodManager
+import android.webkit.CookieManager
+import android.webkit.WebChromeClient
+import android.webkit.WebResourceRequest
+import android.webkit.WebSettings
+import android.webkit.WebView
+import android.webkit.WebViewClient
 import android.widget.Button
 import android.widget.EditText
 import android.widget.LinearLayout
-import android.widget.ScrollView
+import android.widget.ProgressBar
 import android.widget.TextView
 import android.widget.Toast
+import org.json.JSONObject
 
 /**
- * IRCTC-inspired booking preparation screen.
- * Login, CAPTCHA, OTP, booking submission and payment happen on the
- * official IRCTC website and remain under the user's direct control.
+ * Lightweight IRCTC companion browser.
+ * User-triggered form assistance only; CAPTCHA, OTP, login, booking and payment
+ * remain on the official site and are completed by the user.
  */
 class MainActivity : Activity() {
-    private val fields = linkedMapOf<String, EditText>()
+    private lateinit var browser: WebView
+    private lateinit var progress: ProgressBar
+    private lateinit var from: EditText
+    private lateinit var to: EditText
+    private lateinit var date: EditText
+    private lateinit var train: EditText
+    private val prefs by lazy { getSharedPreferences("journey_profile", MODE_PRIVATE) }
 
-    private val red = Color.rgb(190, 25, 45)
-    private val navy = Color.rgb(28, 48, 75)
-    private val ink = Color.rgb(40, 48, 58)
-    private val muted = Color.rgb(105, 114, 125)
-    private val page = Color.rgb(246, 247, 249)
-    private val line = Color.rgb(218, 223, 229)
-
+    @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        window.statusBarColor = red
-        window.navigationBarColor = Color.rgb(245, 245, 245)
-        window.decorView.systemUiVisibility = 0
+        window.statusBarColor = Color.rgb(157, 22, 40)
+        window.navigationBarColor = Color.WHITE
+        CookieManager.getInstance().setAcceptCookie(true)
 
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setBackgroundColor(page)
+            setBackgroundColor(Color.rgb(247, 248, 250))
         }
-
         val header = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(18), dp(14), dp(18), dp(16))
-            setBackgroundColor(red)
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(14), dp(8), dp(10), dp(8))
+            setBackgroundColor(Color.rgb(157, 22, 40))
         }
         header.addView(TextView(this).apply {
-            text = "TATKAL ASSISTANT"
-            textSize = 21f
+            text = "TATKAL LITE"
+            textSize = 18f
             setTextColor(Color.WHITE)
-            typeface = Typeface.create("sans-serif-medium", Typeface.BOLD)
-        })
-        header.addView(TextView(this).apply {
-            text = "Plan your journey • Get ready to book"
-            textSize = 13f
-            setTextColor(Color.WHITE)
-            alpha = 0.92f
-            setPadding(0, dp(3), 0, 0)
-        })
+        }, LinearLayout.LayoutParams(0, dp(44), 1f))
+        header.addView(topButton("IRCTC") { browser.loadUrl(IRCTC_URL) })
+        header.addView(topButton("Back") { if (browser.canGoBack()) browser.goBack() })
+        header.addView(topButton("Reload") { browser.reload() })
         root.addView(header)
 
-        val quickLogin = Button(this).apply {
-            text = "QUICK LOGIN  •  OPEN IRCTC"
-            textSize = 14f
-            isAllCaps = false
-            setTextColor(Color.WHITE)
-            background = rounded(red, 8)
-            setOnClickListener { openIrctcInBrowser() }
+        progress = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
+            isIndeterminate = true
+            visibility = View.GONE
         }
-        val loginWrap = LinearLayout(this).apply {
-            setPadding(dp(14), dp(10), dp(14), dp(2))
-            addView(quickLogin, LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, dp(48)
-            ))
-        }
-        root.addView(loginWrap)
+        root.addView(progress, LinearLayout.LayoutParams(-1, dp(3)))
 
-        val scroll = ScrollView(this).apply {
-            isFillViewport = false
-            clipToPadding = false
-            setPadding(dp(14), dp(8), dp(14), dp(14))
-        }
-        val content = LinearLayout(this).apply {
+        val panel = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
+            setPadding(dp(9), dp(3), dp(9), dp(4))
+            setBackgroundColor(Color.WHITE)
         }
+        val first = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        from = field("From station / code")
+        to = field("To station / code")
+        first.addView(from, weightParams())
+        first.addView(to, weightParams())
+        panel.addView(first)
 
-        val intro = TextView(this).apply {
-            text = "BOOK TICKET"
-            textSize = 17f
-            typeface = Typeface.create("sans-serif-medium", Typeface.BOLD)
-            setTextColor(navy)
-            setPadding(dp(2), dp(4), 0, dp(10))
+        val second = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        date = field("Journey date")
+        train = field("Train no. (optional)")
+        second.addView(date, weightParams())
+        second.addView(train, weightParams())
+        panel.addView(second)
+
+        val controls = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        controls.addView(panelButton("Save") { saveProfile() }, weightParams())
+        controls.addView(panelButton("Fill page") { fillVisibleFields() }, weightParams())
+        controls.addView(panelButton("Open site") { browser.loadUrl(IRCTC_URL) }, weightParams())
+        panel.addView(controls)
+        root.addView(panel)
+
+        browser = WebView(this).apply { setBackgroundColor(Color.WHITE) }
+        browser.settings.apply {
+            javaScriptEnabled = true
+            domStorageEnabled = true
+            loadsImagesAutomatically = true
+            blockNetworkImage = false // Do not break CAPTCHA/image verification.
+            cacheMode = WebSettings.LOAD_DEFAULT
+            setSupportZoom(false)
+            builtInZoomControls = false
+            displayZoomControls = false
+            javaScriptCanOpenWindowsAutomatically = false
+            mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
+            allowFileAccess = false
+            allowContentAccess = false
         }
-        content.addView(intro)
-
-        val journeyCard = card()
-        addSectionTitle(journeyCard, "Journey details")
-        addField(journeyCard, "From station", "e.g. NJP")
-        addField(journeyCard, "To station", "e.g. HWH")
-        addField(journeyCard, "Journey date", "DD-MM-YYYY")
-        addField(journeyCard, "Train number / name", "Enter train number or name")
-        addField(journeyCard, "Travel class", "e.g. 3A, SL, CC")
-        addField(journeyCard, "Quota", "Tatkal")
-        content.addView(journeyCard)
-
-        val passengerCard = card()
-        addSectionTitle(passengerCard, "Passenger details")
-        addField(passengerCard, "Passenger name", "Full name as per ID")
-        addField(passengerCard, "Age", "Age in years")
-        addField(passengerCard, "Gender", "Male / Female / Transgender")
-        addField(passengerCard, "Berth preference", "Optional")
-        content.addView(passengerCard)
-
-        val actions = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER
-            setPadding(0, dp(10), 0, dp(4))
-        }
-        val copy = Button(this).apply {
-            text = "Copy details"
-            isAllCaps = false
-            setTextColor(Color.WHITE)
-            background = rounded(navy, 8)
-            setOnClickListener { copyPreparedDetails() }
-        }
-        val clear = Button(this).apply {
-            text = "Clear form"
-            isAllCaps = false
-            setTextColor(navy)
-            background = rounded(Color.WHITE, 8, line)
-            setOnClickListener {
-                fields.values.forEach { it.text.clear() }
-                Toast.makeText(this@MainActivity, "Form cleared", Toast.LENGTH_SHORT).show()
+        CookieManager.getInstance().setAcceptThirdPartyCookies(browser, false)
+        browser.webChromeClient = WebChromeClient()
+        browser.webViewClient = object : WebViewClient() {
+            override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
+                val host = request.url.host?.lowercase() ?: return true
+                return !(host == "irctc.co.in" || host.endsWith(".irctc.co.in"))
+            }
+            override fun onPageStarted(view: WebView, url: String, favicon: android.graphics.Bitmap?) {
+                progress.visibility = View.VISIBLE
+            }
+            override fun onPageFinished(view: WebView, url: String) {
+                progress.visibility = View.GONE
+                // Only hide explicitly promotional elements. CAPTCHA, form and other
+                // functional images are deliberately left untouched.
+                view.evaluateJavascript("""(function(){
+                    var s=document.getElementById('tatkal-lite-style');
+                    if(!s){s=document.createElement('style');s.id='tatkal-lite-style';
+                    s.textContent='.advertisement,.promo-banner,.marketing-banner{display:none!important}';
+                    document.head.appendChild(s);}
+                })();""", null)
             }
         }
-        actions.addView(copy, LinearLayout.LayoutParams(0, dp(48), 1f).apply {
-            marginEnd = dp(6)
-        })
-        actions.addView(clear, LinearLayout.LayoutParams(0, dp(48), 1f).apply {
-            marginStart = dp(6)
-        })
-        content.addView(actions)
-
-        content.addView(TextView(this).apply {
-            text = "Your details stay on this screen until you leave. Copying puts them on your clipboard. Login, CAPTCHA, OTP, passenger verification and payment are completed manually on IRCTC."
-            textSize = 12f
-            setTextColor(muted)
-            setPadding(dp(4), dp(8), dp(4), dp(12))
-        })
-
-        scroll.addView(content)
-        root.addView(scroll, LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f
-        ))
-
+        root.addView(browser, LinearLayout.LayoutParams(-1, 0, 1f))
         setContentView(root)
+
+        from.setText(prefs.getString("from", ""))
+        to.setText(prefs.getString("to", ""))
+        date.setText(prefs.getString("date", ""))
+        train.setText(prefs.getString("train", ""))
+        if (savedInstanceState == null) browser.loadUrl(IRCTC_URL)
+        else browser.restoreState(savedInstanceState)
     }
 
-    private fun card(): LinearLayout = LinearLayout(this).apply {
-        orientation = LinearLayout.VERTICAL
-        setPadding(dp(14), dp(8), dp(14), dp(12))
-        background = rounded(Color.WHITE, 12, line)
-        elevation = dp(1).toFloat()
-        val params = LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
-        )
-        params.bottomMargin = dp(12)
-        layoutParams = params
+    private fun field(hintText: String) = EditText(this).apply {
+        hint = hintText
+        textSize = 12f
+        singleLine = true
+        setPadding(dp(7), 0, dp(7), 0)
     }
 
-    private fun addSectionTitle(parent: LinearLayout, label: String) {
-        parent.addView(TextView(this).apply {
-            text = label
-            textSize = 16f
-            typeface = Typeface.create("sans-serif-medium", Typeface.BOLD)
-            setTextColor(navy)
-            setPadding(0, dp(5), 0, dp(8))
-        })
+    private fun weightParams() = LinearLayout.LayoutParams(0, dp(43), 1f).apply {
+        setMargins(dp(2), 0, dp(2), 0)
     }
 
-    private fun addField(parent: LinearLayout, label: String, hint: String) {
-        parent.addView(TextView(this).apply {
-            text = label
-            textSize = 12f
-            typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
-            setTextColor(muted)
-            setPadding(0, dp(5), 0, 0)
-        })
-        val input = EditText(this).apply {
-            this.hint = hint
-            textSize = 15f
-            setTextColor(ink)
-            setHintTextColor(Color.rgb(150, 157, 166))
-            setSingleLine(true)
-            contentDescription = label
-            backgroundTintList = ColorStateList.valueOf(line)
-            setPadding(dp(4), 0, dp(4), 0)
+    private fun topButton(label: String, action: () -> Unit) = Button(this).apply {
+        text = label
+        textSize = 10f
+        isAllCaps = false
+        setTextColor(Color.WHITE)
+        setPadding(dp(3), 0, dp(3), 0)
+        setOnClickListener { action() }
+    }
+
+    private fun panelButton(label: String, action: () -> Unit) = Button(this).apply {
+        text = label
+        textSize = 11f
+        isAllCaps = false
+        setPadding(dp(2), 0, dp(2), 0)
+        setOnClickListener { action() }
+    }
+
+    private fun saveProfile() {
+        prefs.edit()
+            .putString("from", from.text.toString())
+            .putString("to", to.text.toString())
+            .putString("date", date.text.toString())
+            .putString("train", train.text.toString())
+            .apply()
+        Toast.makeText(this, "Journey details saved on this device", Toast.LENGTH_SHORT).show()
+    }
+
+    private fun fillVisibleFields() {
+        val data = JSONObject().apply {
+            put("from", from.text.toString())
+            put("to", to.text.toString())
+            put("date", date.text.toString())
+            put("train", train.text.toString())
         }
-        fields[label] = input
-        parent.addView(input, LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, dp(46)
-        ))
+        val script = """
+          (function(d) {
+            function set(el, value) {
+              if (!el || !value || el.disabled || el.readOnly) return false;
+              var key=((el.name||'')+' '+(el.id||'')+' '+(el.placeholder||'')+' '+(el.getAttribute('aria-label')||'')).toLowerCase();
+              if (/captcha|security|verification|otp|password|payment|card|cvv/.test(key)) return false;
+              var proto=Object.getPrototypeOf(el);
+              var desc=Object.getOwnPropertyDescriptor(proto,'value');
+              if(desc && desc.set) desc.set.call(el,value); else el.value=value;
+              el.dispatchEvent(new Event('input',{bubbles:true}));
+              el.dispatchEvent(new Event('change',{bubbles:true}));
+              return true;
+            }
+            var count=0;
+            Array.from(document.querySelectorAll('input:not([type=hidden]),textarea')).forEach(function(el){
+              var k=((el.name||'')+' '+(el.id||'')+' '+(el.placeholder||'')+' '+(el.getAttribute('aria-label')||'')).toLowerCase();
+              if(/captcha|otp|password|payment|card|cvv|email|mobile|phone/.test(k)) return;
+              if(/from|origin|source/.test(k)) {if(set(el,d.from)) count++;}
+              else if(/to|destination|dest/.test(k)) {if(set(el,d.to)) count++;}
+              else if(/journey.?date|date/.test(k)) {if(set(el,d.date)) count++;}
+              else if(/train/.test(k)) {if(set(el,d.train)) count++;}
+            });
+            return count;
+          })(${data});
+        """.trimIndent()
+        browser.evaluateJavascript(script) { result ->
+            val count = result?.trim('"')?.toIntOrNull() ?: 0
+            Toast.makeText(this, if (count > 0) "$count field(s) filled. Please review them." else "No matching fields found. Fill manually.", Toast.LENGTH_LONG).show()
+        }
+        (getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager)
+            .hideSoftInputFromWindow(browser.windowToken, 0)
     }
 
-    private fun openIrctcInBrowser() {
-        val intent = Intent(Intent.ACTION_VIEW, Uri.parse(IRCTC_URL))
-        try {
-            startActivity(intent)
-        } catch (_: android.content.ActivityNotFoundException) {
-            Toast.makeText(this, "No browser is installed. Please install or enable a browser.", Toast.LENGTH_LONG).show()
-        }
+    override fun onSaveInstanceState(outState: Bundle) {
+        browser.saveState(outState)
+        super.onSaveInstanceState(outState)
     }
 
-    private fun copyPreparedDetails() {
-        val summary = fields.entries.joinToString("\n") { (label, input) ->
-            "$label: ${input.text.toString().trim()}"
-        }.trim()
-        if (summary.isBlank()) {
-            Toast.makeText(this, "Enter details first", Toast.LENGTH_SHORT).show()
-            return
-        }
-        val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-        clipboard.setPrimaryClip(ClipData.newPlainText("Tatkal booking details", summary))
-        Toast.makeText(this, "Details copied to clipboard", Toast.LENGTH_SHORT).show()
+    @Deprecated("Deprecated in Android API")
+    override fun onBackPressed() {
+        if (::browser.isInitialized && browser.canGoBack()) browser.goBack() else super.onBackPressed()
     }
 
-    private fun rounded(color: Int, radius: Int, stroke: Int? = null): GradientDrawable =
-        GradientDrawable().apply {
-            setColor(color)
-            cornerRadius = dp(radius).toFloat()
-            if (stroke != null) setStroke(dp(1), stroke)
-        }
+    override fun onDestroy() {
+        if (::browser.isInitialized) browser.destroy()
+        super.onDestroy()
+    }
 
-    private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
+    private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
 
     companion object {
-        private const val IRCTC_URL = "https://www.irctc.co.in/nget/"
+        private const val IRCTC_URL = "https://www.irctc.co.in/nget/train-search"
     }
 }
