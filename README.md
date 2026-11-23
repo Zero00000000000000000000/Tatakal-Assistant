@@ -25,3 +25,11 @@ gradle assembleDebug
 ```
 
 The Android CI workflow uploads a debug APK after a successful build.
+
+
+### Consent-based OTP assist
+- Tap **OTP assist** before requesting an IRCTC OTP.
+- The app uses Google's SMS User Consent API; it does not request broad SMS-reading permission.
+- When a matching SMS arrives, Android shows a consent prompt. The user must approve it.
+- After approval, the app attempts to fill the visible OTP field only. It never submits the form.
+- CAPTCHA solving, OTP interception without consent, login bypass, and automated booking/payment are not supported.
