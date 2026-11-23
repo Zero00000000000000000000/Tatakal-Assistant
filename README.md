@@ -1,19 +1,26 @@
 # Tatkal Assistant
 
-A native Android 13+ companion app for organizing an IRCTC booking session.
+A native Kotlin Android companion for preparing an IRCTC Tatkal booking session.
 
-## Current scope
-- Android Kotlin app with a lightweight WebView shell.
-- User-controlled navigation to the official IRCTC website.
-- JavaScript and DOM storage enabled for site compatibility.
-- CAPTCHA and OTP remain entirely user-controlled; no bypass, automated solving, or automated challenge submission.
-- No credential collection or storage.
+## Included
+- Official IRCTC site inside a WebView.
+- Local journey and one-passenger preparation form.
+- Copy prepared details to the device clipboard.
+- Clear form action.
+- Navigation limited to IRCTC domains.
+- GitHub Actions debug APK build.
+
+## Privacy and boundaries
+- Form values are held in screen memory only; this app does not persist or upload them.
+- Copying details puts them on the system clipboard.
+- The app does not collect IRCTC credentials, automate login, submit a booking, bypass CAPTCHA, solve human-verification challenges, automate OTP, or handle payment.
+- CAPTCHA, OTP, passenger verification, and final booking steps remain user-controlled.
 
 ## Build
-Open this project in Android Studio, or run a Gradle 8.9 build with JDK 17 and Android SDK 35:
+Requirements: JDK 17, Android SDK 35, and Gradle 8.9.
 
 ```bash
 gradle assembleDebug
 ```
 
-The GitHub Actions workflow builds the debug APK on pushes and pull requests.
+The APK is uploaded as the `tatkal-assistant-debug` artifact by the Android CI workflow after a successful build.
