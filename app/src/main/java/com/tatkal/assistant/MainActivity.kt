@@ -9,7 +9,6 @@ import android.content.IntentFilter
 import android.graphics.Color
 import android.graphics.Bitmap
 import android.graphics.Canvas
-import android.graphics.Rect
 import android.os.Bundle
 import android.view.Gravity
 import android.view.View
@@ -268,7 +267,10 @@ class MainActivity : Activity() {
             Imgproc.cvtColor(source, lab, Imgproc.COLOR_RGBA2Lab)
             Core.split(lab, channels)
             val clahe: CLAHE = Imgproc.createCLAHE(2.0, org.opencv.core.Size(8.0, 8.0))
-            clahe.apply(channels[0], channels[0])
+            val enhancedL = Mat()
+            clahe.apply(channels[0], enhancedL)
+            channels[0].release()
+            channels[0] = enhancedL
             Core.merge(channels, lab)
             Imgproc.cvtColor(lab, result, Imgproc.COLOR_Lab2RGBA)
             val enhanced = Bitmap.createBitmap(result.cols(), result.rows(), Bitmap.Config.ARGB_8888)
@@ -277,7 +279,6 @@ class MainActivity : Activity() {
             lab.release()
             result.release()
             channels.forEach { it.release() }
-            clahe.collectGarbage()
 
             val layout = LinearLayout(this).apply {
                 orientation = LinearLayout.VERTICAL
