@@ -117,6 +117,8 @@ class MainActivity : Activity() {
         controls.addView(panelButton("Fill page") { fillVisibleFields() }, weightParams())
         controls.addView(panelButton("Open site") { browser.loadUrl(IRCTC_URL) }, weightParams())
         controls.addView(panelButton("OTP assist") { startOtpListening() }, weightParams())
+        controls.addView(panelButton("CAPTCHA enhance") { enhanceCaptchaImages() }, weightParams())
+        controls.addView(panelButton("Reset images") { resetCaptchaImages() }, weightParams())
         panel.addView(controls)
         root.addView(panel)
 
@@ -194,6 +196,55 @@ class MainActivity : Activity() {
         isAllCaps = false
         setPadding(dp(2), 0, dp(2), 0)
         setOnClickListener { action() }
+    }
+
+    // Visual-only CAPTCHA aid: applies reversible browser image filters to likely
+    // CAPTCHA images. It does not read, recognize, solve or submit CAPTCHA text.
+    private fun enhanceCaptchaImages() {
+        val js = """
+            (function() {
+              var imgs = Array.from(document.images).filter(function(img) {
+                var r = img.getBoundingClientRect();
+                if (!r.width || !r.height || r.width < 45 || r.height < 16 || r.width > 900 || r.height > 350) return false;
+                var meta = ((img.id||'')+' '+(img.className||'')+' '+(img.alt||'')+' '+(img.src||'')).toLowerCase();
+                return /captcha|security.?code|verification.?image/.test(meta) ||
+                  (r.width >= 90 && r.height >= 22 && r.height <= 130 && r.width / r.height >= 1.4);
+              });
+              if (!imgs.length) return 0;
+              imgs.forEach(function(img) {
+                img.dataset.tatkalOriginalFilter = img.style.filter || '';
+                img.dataset.tatkalOriginalTransform = img.style.transform || '';
+                img.style.filter = 'contrast(1.65) grayscale(1) brightness(1.08)';
+                img.style.transform = 'scale(1.12)';
+                img.style.transformOrigin = 'left center';
+                img.style.outline = '2px solid #9d1628';
+                img.style.outlineOffset = '2px';
+              });
+              return imgs.length;
+            })();
+        """.trimIndent()
+        browser.evaluateJavascript(js) { result ->
+            val count = result?.trim('"')?.toIntOrNull() ?: 0
+            Toast.makeText(this, if (count > 0) "Enhanced $count likely image(s). Enter CAPTCHA manually." else "No likely CAPTCHA image found on this page.", Toast.LENGTH_LONG).show()
+        }
+    }
+
+    private fun resetCaptchaImages() {
+        browser.evaluateJavascript("""
+            (function() {
+              document.querySelectorAll('img').forEach(function(img) {
+                if (!img.dataset.tatkalOriginalFilter && !img.dataset.tatkalOriginalTransform) return;
+                img.style.filter = img.dataset.tatkalOriginalFilter || '';
+                img.style.transform = img.dataset.tatkalOriginalTransform || '';
+                img.style.outline = '';
+                img.style.outlineOffset = '';
+                delete img.dataset.tatkalOriginalFilter;
+                delete img.dataset.tatkalOriginalTransform;
+              });
+              return true;
+            })();
+        """.trimIndent(), null)
+        Toast.makeText(this, "Image appearance reset", Toast.LENGTH_SHORT).show()
     }
 
     private fun registerSmsConsentReceiver() {
