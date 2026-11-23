@@ -149,7 +149,7 @@ class MainActivity : Activity() {
         val input = EditText(this).apply {
             this.hint = hint
             textSize = 14f
-            singleLine = true
+            setSingleLine(true)
             contentDescription = label
             setPadding(dp(8), 0, dp(8), 0)
         }
