@@ -1,6 +1,6 @@
-# Tatkal Lite Browser
+# Tatkal Lite
 
-A lightweight native Kotlin Android browser focused on preparing an IRCTC Tatkal session.
+A lightweight native Kotlin journey helper that opens the official IRCTC website in Chrome instead of an embedded WebView.
 
 ## Features
 - Opens the official IRCTC website inside the app (WebView; no external browser hand-off).
@@ -38,3 +38,4 @@ The Android CI workflow uploads a debug APK after a successful build.
 ### CAPTCHA handling
 - CAPTCHA images remain enabled and are displayed by the official IRCTC page.
 - The user reads and enters the CAPTCHA manually; the app does not process, solve, bypass, or submit CAPTCHA challenges.
+\n\n### Browser compatibility\nIRCTC is opened using Chrome's normal browser activity because the IRCTC site may reject embedded WebView sessions. If Chrome is unavailable, Android's default browser is used.\n
