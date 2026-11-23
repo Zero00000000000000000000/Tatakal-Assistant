@@ -7,8 +7,6 @@ import android.content.BroadcastReceiver
 import android.content.Intent
 import android.content.IntentFilter
 import android.graphics.Color
-import android.graphics.Bitmap
-import android.graphics.Canvas
 import android.os.Bundle
 import android.view.Gravity
 import android.view.View
@@ -22,20 +20,12 @@ import android.webkit.WebViewClient
 import com.google.android.gms.auth.api.phone.SmsRetriever
 import com.google.android.gms.common.api.CommonStatusCodes
 import android.widget.Button
-import android.widget.ImageView
 import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.ProgressBar
 import android.widget.TextView
 import android.widget.Toast
 import org.json.JSONObject
-import org.json.JSONTokener
-import org.opencv.android.OpenCVLoader
-import org.opencv.android.Utils
-import org.opencv.core.Core
-import org.opencv.core.Mat
-import org.opencv.imgproc.Imgproc
-import org.opencv.imgproc.CLAHE
 
 /**
  * Lightweight IRCTC companion browser.
@@ -127,7 +117,6 @@ class MainActivity : Activity() {
         controls.addView(panelButton("Fill page") { fillVisibleFields() }, weightParams())
         controls.addView(panelButton("Open site") { browser.loadUrl(IRCTC_URL) }, weightParams())
         controls.addView(panelButton("OTP assist") { startOtpListening() }, weightParams())
-        controls.addView(panelButton("OpenCV CAPTCHA") { enhanceCaptchaImages() }, weightParams())
         panel.addView(controls)
         root.addView(panel)
 
@@ -205,126 +194,6 @@ class MainActivity : Activity() {
         isAllCaps = false
         setPadding(dp(2), 0, dp(2), 0)
         setOnClickListener { action() }
-    }
-
-    // Captures only the visible page area, crops a likely CAPTCHA image and
-    // enhances the crop locally with OpenCV. No OCR or challenge solving.
-    private fun enhanceCaptchaImages() {
-        if (!OpenCVLoader.initLocal()) {
-            Toast.makeText(this, "OpenCV could not initialize. Please retry after rebuilding.", Toast.LENGTH_LONG).show()
-            return
-        }
-        val locator = """
-            (function() {
-              var imgs = Array.from(document.images).filter(function(img) {
-                var r = img.getBoundingClientRect();
-                if (!r.width || !r.height || r.width < 45 || r.height < 16 || r.width > 900 || r.height > 350) return false;
-                var meta = ((img.id||'')+' '+(img.className||'')+' '+(img.alt||'')+' '+(img.src||'')).toLowerCase();
-                return /captcha|security.?code|verification.?image/.test(meta) ||
-                  (r.width >= 90 && r.height >= 22 && r.height <= 130 && r.width / r.height >= 1.4);
-              });
-              if (!imgs.length) return '';
-              imgs.sort(function(a,b) {
-                var am = ((a.id||'')+' '+(a.className||'')+' '+(a.alt||'')+' '+(a.src||'')).toLowerCase();
-                var bm = ((b.id||'')+' '+(b.className||'')+' '+(b.alt||'')+' '+(b.src||'')).toLowerCase();
-                return (/captcha|security.?code|verification.?image/.test(bm) ? 1 : 0) -
-                       (/captcha|security.?code|verification.?image/.test(am) ? 1 : 0);
-              });
-              var r = imgs[0].getBoundingClientRect(), d = window.devicePixelRatio || 1;
-              return JSON.stringify({x:r.left*d,y:r.top*d,w:r.width*d,h:r.height*d});
-            })();
-        """.trimIndent()
-        browser.evaluateJavascript(locator) { raw ->
-            try {
-                val jsonText = JSONTokener(raw ?: "\"\"").nextValue() as? String
-                if (jsonText.isNullOrBlank()) {
-                    Toast.makeText(this, "Could not identify a CAPTCHA image on this screen.", Toast.LENGTH_LONG).show()
-                    return@evaluateJavascript
-                }
-                val rect = JSONObject(jsonText)
-                val page = Bitmap.createBitmap(browser.width, browser.height, Bitmap.Config.ARGB_8888)
-                browser.draw(Canvas(page))
-                val left = rect.getDouble("x").toInt().coerceIn(0, page.width - 1)
-                val top = rect.getDouble("y").toInt().coerceIn(0, page.height - 1)
-                val right = (left + rect.getDouble("w").toInt()).coerceIn(left + 1, page.width)
-                val bottom = (top + rect.getDouble("h").toInt()).coerceIn(top + 1, page.height)
-                val crop = Bitmap.createBitmap(page, left, top, right - left, bottom - top)
-                page.recycle()
-                showOpenCvPreview(crop)
-            } catch (e: Exception) {
-                Toast.makeText(this, "Could not capture CAPTCHA image. Scroll it fully into view and retry.", Toast.LENGTH_LONG).show()
-            }
-        }
-    }
-
-    private fun showOpenCvPreview(original: Bitmap) {
-        try {
-            val source = Mat()
-            val lab = Mat()
-            val result = Mat()
-            val channels = ArrayList<Mat>()
-            Utils.bitmapToMat(original, source)
-            Imgproc.cvtColor(source, lab, Imgproc.COLOR_RGBA2Lab)
-            Core.split(lab, channels)
-            val clahe: CLAHE = Imgproc.createCLAHE(2.0, org.opencv.core.Size(8.0, 8.0))
-            val enhancedL = Mat()
-            clahe.apply(channels[0], enhancedL)
-            channels[0].release()
-            channels[0] = enhancedL
-            Core.merge(channels, lab)
-            Imgproc.cvtColor(lab, result, Imgproc.COLOR_Lab2RGBA)
-            val enhanced = Bitmap.createBitmap(result.cols(), result.rows(), Bitmap.Config.ARGB_8888)
-            Utils.matToBitmap(result, enhanced)
-            source.release()
-            lab.release()
-            result.release()
-            channels.forEach { it.release() }
-
-            val layout = LinearLayout(this).apply {
-                orientation = LinearLayout.VERTICAL
-                setPadding(dp(16), dp(12), dp(16), dp(12))
-            }
-            layout.addView(TextView(this).apply {
-                text = "OpenCV enhanced preview"
-                textSize = 17f
-                setTextColor(Color.BLACK)
-            })
-            layout.addView(TextView(this).apply {
-                text = "Original image is shown below the enhanced version. Enter the CAPTCHA yourself on the IRCTC page."
-                textSize = 12f
-            })
-            layout.addView(TextView(this).apply {
-                text = "Enhanced"
-                textSize = 13f
-                setPadding(0, dp(8), 0, dp(4))
-            })
-            layout.addView(ImageView(this).apply {
-                setImageBitmap(enhanced)
-                adjustViewBounds = true
-                scaleType = ImageView.ScaleType.FIT_CENTER
-            }, LinearLayout.LayoutParams(-1, dp(110)))
-            layout.addView(TextView(this).apply {
-                text = "Original"
-                textSize = 13f
-                setPadding(0, dp(8), 0, dp(4))
-            })
-            layout.addView(ImageView(this).apply {
-                setImageBitmap(original)
-                adjustViewBounds = true
-                scaleType = ImageView.ScaleType.FIT_CENTER
-            }, LinearLayout.LayoutParams(-1, dp(110)))
-            android.app.AlertDialog.Builder(this)
-                .setView(layout)
-                .setPositiveButton("Done") { dialog, _ ->
-                    dialog.dismiss()
-                    enhanced.recycle()
-                    original.recycle()
-                }
-                .show()
-        } catch (e: Exception) {
-            original.recycle()
-            Toast.makeText(this, "OpenCV image enhancement failed.", Toast.LENGTH_LONG).show()
-        }
     }
 
     private fun registerSmsConsentReceiver() {
