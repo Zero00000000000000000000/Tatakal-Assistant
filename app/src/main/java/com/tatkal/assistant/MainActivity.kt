@@ -1,5 +1,6 @@
 package com.tatkal.assistant
 
+import android.annotation.SuppressLint
 import android.app.Activity
 import android.content.BroadcastReceiver
 import android.content.ClipData
@@ -11,20 +12,29 @@ import android.graphics.Color
 import android.net.Uri
 import android.os.Bundle
 import android.view.Gravity
+import android.view.View
+import android.webkit.CookieManager
+import android.webkit.WebChromeClient
+import android.webkit.WebResourceRequest
+import android.webkit.WebSettings
+import android.webkit.WebView
+import android.webkit.WebViewClient
 import android.widget.Button
 import android.widget.EditText
 import android.widget.LinearLayout
+import android.widget.ProgressBar
 import android.widget.TextView
 import android.widget.Toast
 import com.google.android.gms.auth.api.phone.SmsRetriever
 import com.google.android.gms.common.api.CommonStatusCodes
 
 /**
- * Lightweight IRCTC journey helper.
- * IRCTC opens in Chrome/the system browser, not an embedded WebView.
- * Journey details and OTP are copied only after the user taps the relevant control.
+ * Native Android companion with IRCTC displayed inside the app using WebView.
+ * It does not spoof browser identity or bypass IRCTC security controls.
  */
 class MainActivity : Activity() {
+    private lateinit var browser: WebView
+    private lateinit var progress: ProgressBar
     private lateinit var from: EditText
     private lateinit var to: EditText
     private lateinit var date: EditText
@@ -51,101 +61,115 @@ class MainActivity : Activity() {
         }
     }
 
+    @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         window.statusBarColor = Color.rgb(157, 22, 40)
         window.navigationBarColor = Color.WHITE
+        CookieManager.getInstance().setAcceptCookie(true)
         registerSmsConsentReceiver()
 
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(14), dp(12), dp(14), dp(12))
             setBackgroundColor(Color.rgb(247, 248, 250))
         }
 
         val header = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(12), dp(10), dp(8), dp(10))
+            setPadding(dp(10), dp(6), dp(6), dp(6))
             setBackgroundColor(Color.rgb(157, 22, 40))
         }
         header.addView(TextView(this).apply {
             text = "TATKAL LITE"
-            textSize = 18f
+            textSize = 17f
             setTextColor(Color.WHITE)
-        }, LinearLayout.LayoutParams(0, dp(48), 1f))
-        header.addView(actionButton("Open Chrome") { openIrctcInChrome() }.apply {
-            setTextColor(Color.WHITE)
-        })
+        }, LinearLayout.LayoutParams(0, dp(46), 1f))
+        header.addView(topButton("IRCTC") { browser.loadUrl(IRCTC_URL) })
+        header.addView(topButton("Back") { if (browser.canGoBack()) browser.goBack() })
+        header.addView(topButton("Reload") { browser.reload() })
         root.addView(header)
 
-        root.addView(TextView(this).apply {
-            text = "Journey details"
-            textSize = 17f
-            setTextColor(Color.BLACK)
-            setPadding(dp(4), dp(18), dp(4), dp(6))
-        })
+        progress = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
+            isIndeterminate = true
+            visibility = View.GONE
+        }
+        root.addView(progress, LinearLayout.LayoutParams(-1, dp(3)))
 
-        val first = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        val panel = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(8), dp(2), dp(8), dp(3))
+            setBackgroundColor(Color.WHITE)
+        }
+        val row1 = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         from = field("From station / code")
         to = field("To station / code")
-        first.addView(from, weightParams())
-        first.addView(to, weightParams())
-        root.addView(first)
+        row1.addView(from, weightParams())
+        row1.addView(to, weightParams())
+        panel.addView(row1)
 
-        val second = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        date = field("Journey date (DD-MM-YYYY)")
+        val row2 = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        date = field("Journey date")
         train = field("Train no. (optional)")
-        second.addView(date, weightParams())
-        second.addView(train, weightParams())
-        root.addView(second)
+        row2.addView(date, weightParams())
+        row2.addView(train, weightParams())
+        panel.addView(row2)
 
-        val controls = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            setPadding(0, dp(8), 0, 0)
+        val row3 = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        row3.addView(panelButton("Save") { saveProfile() }, weightParams())
+        row3.addView(panelButton("Copy") { copyJourneyDetails() }, weightParams())
+        row3.addView(panelButton("OTP assist") { startOtpListening() }, weightParams())
+        panel.addView(row3)
+        root.addView(panel)
+
+        browser = WebView(this).apply { setBackgroundColor(Color.WHITE) }
+        browser.settings.apply {
+            javaScriptEnabled = true
+            domStorageEnabled = true
+            loadsImagesAutomatically = true
+            blockNetworkImage = false
+            cacheMode = WebSettings.LOAD_DEFAULT
+            setSupportZoom(true)
+            builtInZoomControls = true
+            displayZoomControls = false
+            javaScriptCanOpenWindowsAutomatically = false
+            mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
+            allowFileAccess = false
+            allowContentAccess = false
         }
-        controls.addView(actionButton("Save") { saveProfile() }, weightParams())
-        controls.addView(actionButton("Copy details") { copyJourneyDetails() }, weightParams())
-        controls.addView(actionButton("OTP assist") { startOtpListening() }, weightParams())
-        root.addView(controls)
+        CookieManager.getInstance().setAcceptThirdPartyCookies(browser, true)
+        browser.webChromeClient = WebChromeClient()
+        browser.webViewClient = object : WebViewClient() {
+            override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
+                val uri = request.url
+                if (uri.scheme != "https") return true
+                val host = uri.host?.lowercase() ?: return true
+                if (host == "irctc.co.in" || host.endsWith(".irctc.co.in")) return false
+                return try {
+                    startActivity(Intent(Intent.ACTION_VIEW, uri))
+                    true
+                } catch (_: Exception) {
+                    true
+                }
+            }
 
-        root.addView(TextView(this).apply {
-            text = "IRCTC opens in Chrome to avoid embedded-browser access errors. Save or copy your journey details here, then enter them on the official IRCTC site. OTP assist copies the code only after you approve Google's SMS consent prompt."
-            textSize = 13f
-            setTextColor(Color.DKGRAY)
-            setPadding(dp(6), dp(18), dp(6), dp(8))
-        })
+            override fun onPageStarted(view: WebView, url: String, favicon: android.graphics.Bitmap?) {
+                progress.visibility = View.VISIBLE
+            }
 
-        root.addView(actionButton("OPEN OFFICIAL IRCTC WEBSITE") { openIrctcInChrome() }.apply {
-            textSize = 15f
-            setTextColor(Color.WHITE)
-            setBackgroundColor(Color.rgb(157, 22, 40))
-        }, LinearLayout.LayoutParams(-1, dp(52)).apply {
-            setMargins(0, dp(12), 0, 0)
-        })
-
+            override fun onPageFinished(view: WebView, url: String) {
+                progress.visibility = View.GONE
+            }
+        }
+        root.addView(browser, LinearLayout.LayoutParams(-1, 0, 1f))
         setContentView(root)
 
         from.setText(prefs.getString("from", ""))
         to.setText(prefs.getString("to", ""))
         date.setText(prefs.getString("date", ""))
         train.setText(prefs.getString("train", ""))
-    }
-
-    private fun openIrctcInChrome() {
-        val uri = Uri.parse(IRCTC_URL)
-        val chromeIntent = Intent(Intent.ACTION_VIEW, uri).apply {
-            setPackage(CHROME_PACKAGE)
-        }
-        try {
-            startActivity(chromeIntent)
-        } catch (_: android.content.ActivityNotFoundException) {
-            try {
-                startActivity(Intent(Intent.ACTION_VIEW, uri))
-            } catch (_: Exception) {
-                Toast.makeText(this, "No browser is available. Install or enable Chrome.", Toast.LENGTH_LONG).show()
-            }
-        }
+        if (savedInstanceState == null) browser.loadUrl(IRCTC_URL)
+        else browser.restoreState(savedInstanceState)
     }
 
     private fun field(hintText: String) = EditText(this).apply {
@@ -155,15 +179,24 @@ class MainActivity : Activity() {
         setPadding(dp(7), 0, dp(7), 0)
     }
 
-    private fun weightParams() = LinearLayout.LayoutParams(0, dp(46), 1f).apply {
-        setMargins(dp(3), dp(3), dp(3), dp(3))
+    private fun weightParams() = LinearLayout.LayoutParams(0, dp(42), 1f).apply {
+        setMargins(dp(2), dp(1), dp(2), dp(1))
     }
 
-    private fun actionButton(label: String, action: () -> Unit) = Button(this).apply {
+    private fun topButton(label: String, action: () -> Unit) = Button(this).apply {
+        text = label
+        textSize = 10f
+        isAllCaps = false
+        setTextColor(Color.WHITE)
+        setPadding(dp(2), 0, dp(2), 0)
+        setOnClickListener { action() }
+    }
+
+    private fun panelButton(label: String, action: () -> Unit) = Button(this).apply {
         text = label
         textSize = 11f
         isAllCaps = false
-        setPadding(dp(3), 0, dp(3), 0)
+        setPadding(dp(2), 0, dp(2), 0)
         setOnClickListener { action() }
     }
 
@@ -190,7 +223,7 @@ class MainActivity : Activity() {
         }
         val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
         clipboard.setPrimaryClip(ClipData.newPlainText("Journey details", lines.joinToString("\n")))
-        Toast.makeText(this, "Journey details copied. Paste them in Chrome as needed.", Toast.LENGTH_LONG).show()
+        Toast.makeText(this, "Journey details copied.", Toast.LENGTH_SHORT).show()
     }
 
     private fun registerSmsConsentReceiver() {
@@ -207,10 +240,10 @@ class MainActivity : Activity() {
     private fun startOtpListening() {
         SmsRetriever.getClient(this).startSmsUserConsent(null)
             .addOnSuccessListener {
-                Toast.makeText(this, "OTP listener active for up to 5 minutes. Approve the SMS prompt when it arrives.", Toast.LENGTH_LONG).show()
+                Toast.makeText(this, "OTP listener active. Approve Google's SMS prompt when it arrives.", Toast.LENGTH_LONG).show()
             }
             .addOnFailureListener {
-                Toast.makeText(this, "Could not start OTP assist. Please enter OTP manually.", Toast.LENGTH_LONG).show()
+                Toast.makeText(this, "Could not start OTP assist. Enter OTP manually.", Toast.LENGTH_LONG).show()
             }
     }
 
@@ -221,12 +254,22 @@ class MainActivity : Activity() {
         val message = data.getStringExtra(SmsRetriever.EXTRA_SMS_MESSAGE).orEmpty()
         val otp = Regex("(?<!\\d)\\d{4,8}(?!\\d)").find(message)?.value
         if (otp.isNullOrBlank()) {
-            Toast.makeText(this, "No clear OTP found. Please enter it manually.", Toast.LENGTH_LONG).show()
+            Toast.makeText(this, "No clear OTP found. Enter it manually.", Toast.LENGTH_LONG).show()
             return
         }
         val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
         clipboard.setPrimaryClip(ClipData.newPlainText("OTP", otp))
-        Toast.makeText(this, "OTP copied after your approval. Paste it into IRCTC yourself.", Toast.LENGTH_LONG).show()
+        Toast.makeText(this, "OTP copied after your approval. Paste it into the page.", Toast.LENGTH_LONG).show()
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        if (::browser.isInitialized) browser.saveState(outState)
+        super.onSaveInstanceState(outState)
+    }
+
+    @Deprecated("Deprecated in Android API")
+    override fun onBackPressed() {
+        if (::browser.isInitialized && browser.canGoBack()) browser.goBack() else super.onBackPressed()
     }
 
     override fun onDestroy() {
@@ -234,6 +277,7 @@ class MainActivity : Activity() {
             try { unregisterReceiver(smsConsentReceiver) } catch (_: IllegalArgumentException) { }
             smsReceiverRegistered = false
         }
+        if (::browser.isInitialized) browser.destroy()
         super.onDestroy()
     }
 
@@ -241,7 +285,6 @@ class MainActivity : Activity() {
 
     companion object {
         private const val IRCTC_URL = "https://www.irctc.co.in/nget/train-search"
-        private const val CHROME_PACKAGE = "com.android.chrome"
         private const val SMS_CONSENT_REQUEST = 4102
     }
 }
