@@ -171,7 +171,7 @@ class MainActivity : Activity() {
     private fun field(hintText: String) = EditText(this).apply {
         hint = hintText
         textSize = 12f
-        singleLine = true
+        isSingleLine = true
         setPadding(dp(7), 0, dp(7), 0)
     }
 
