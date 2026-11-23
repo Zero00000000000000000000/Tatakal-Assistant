@@ -1,15 +1,13 @@
 package com.tatkal.assistant
 
-import android.annotation.SuppressLint
 import android.app.Activity
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
+import android.content.Intent
+import android.net.Uri
 import android.os.Bundle
 import android.view.ViewGroup
-import android.webkit.WebChromeClient
-import android.webkit.WebView
-import android.webkit.WebViewClient
 import android.widget.Button
 import android.widget.EditText
 import android.widget.LinearLayout
@@ -22,10 +20,8 @@ import android.widget.Toast
  * solve CAPTCHA, handle OTP, or interact with payment flows.
  */
 class MainActivity : Activity() {
-    private lateinit var webView: WebView
     private val fields = linkedMapOf<String, EditText>()
 
-    @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
@@ -94,46 +90,26 @@ class MainActivity : Activity() {
             isFillViewport = false
         }
         root.addView(formScroll, LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, dp(330)
+            ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f
         ))
 
         val openButton = Button(this).apply {
             text = "Open official IRCTC website"
-            setOnClickListener { webView.loadUrl(IRCTC_URL) }
+            setOnClickListener { openIrctcInBrowser() }
         }
-        root.addView(openButton)
-
-        webView = WebView(this).apply {
-            settings.javaScriptEnabled = true
-            settings.domStorageEnabled = true
-            settings.loadsImagesAutomatically = true
-            settings.javaScriptCanOpenWindowsAutomatically = false
-            settings.setSupportMultipleWindows(false)
-            webViewClient = object : WebViewClient() {
-                override fun shouldOverrideUrlLoading(
-                    view: WebView,
-                    request: android.webkit.WebResourceRequest
-                ): Boolean {
-                    val host = request.url.host.orEmpty()
-                    return if (host == "irctc.co.in" || host.endsWith(".irctc.co.in")) {
-                        false
-                    } else {
-                        Toast.makeText(this@MainActivity, "External navigation blocked", Toast.LENGTH_SHORT).show()
-                        true
-                    }
-                }
-            }
-            webChromeClient = WebChromeClient()
-        }
-        root.addView(webView, LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f
+        root.addView(openButton, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, dp(52)
         ))
 
         setContentView(root)
-        if (savedInstanceState != null) {
-            webView.restoreState(savedInstanceState)
-        } else {
-            webView.loadUrl(IRCTC_URL)
+    }
+
+    private fun openIrctcInBrowser() {
+        val intent = Intent(Intent.ACTION_VIEW, Uri.parse(IRCTC_URL))
+        try {
+            startActivity(intent)
+        } catch (_: android.content.ActivityNotFoundException) {
+            Toast.makeText(this, "No browser is installed. Install or enable a browser and try again.", Toast.LENGTH_LONG).show()
         }
     }
 
@@ -174,17 +150,6 @@ class MainActivity : Activity() {
         val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
         clipboard.setPrimaryClip(ClipData.newPlainText("Tatkal booking details", summary))
         Toast.makeText(this, "Details copied to clipboard", Toast.LENGTH_SHORT).show()
-    }
-
-    override fun onSaveInstanceState(outState: Bundle) {
-        if (::webView.isInitialized) webView.saveState(outState)
-        super.onSaveInstanceState(outState)
-    }
-
-    @Deprecated("Deprecated in Android API")
-    override fun onBackPressed() {
-        if (::webView.isInitialized && webView.canGoBack()) webView.goBack()
-        else super.onBackPressed()
     }
 
     private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
