@@ -3,6 +3,9 @@ package com.tatkal.assistant
 import android.annotation.SuppressLint
 import android.app.Activity
 import android.content.Context
+import android.content.BroadcastReceiver
+import android.content.Intent
+import android.content.IntentFilter
 import android.graphics.Color
 import android.os.Bundle
 import android.view.Gravity
@@ -14,6 +17,8 @@ import android.webkit.WebResourceRequest
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import com.google.android.gms.auth.api.phone.SmsRetriever
+import com.google.android.gms.common.api.CommonStatusCodes
 import android.widget.Button
 import android.widget.EditText
 import android.widget.LinearLayout
@@ -35,6 +40,24 @@ class MainActivity : Activity() {
     private lateinit var date: EditText
     private lateinit var train: EditText
     private val prefs by lazy { getSharedPreferences("journey_profile", MODE_PRIVATE) }
+    private var smsReceiverRegistered = false
+    private val smsConsentReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            if (intent.action != SmsRetriever.SMS_RETRIEVED_ACTION) return
+            val extras = intent.extras ?: return
+            val status = extras.get(SmsRetriever.EXTRA_STATUS) as? com.google.android.gms.common.api.Status ?: return
+            when (status.statusCode) {
+                CommonStatusCodes.SUCCESS -> {
+                    val consentIntent = extras.getParcelable<Intent>(SmsRetriever.EXTRA_CONSENT_INTENT)
+                    if (consentIntent != null) {
+                        @Suppress("DEPRECATION")
+                        startActivityForResult(consentIntent, SMS_CONSENT_REQUEST)
+                    }
+                }
+                CommonStatusCodes.TIMEOUT -> Toast.makeText(this@MainActivity, "OTP listening timed out. Tap OTP assist to try again.", Toast.LENGTH_LONG).show()
+            }
+        }
+    }
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -42,6 +65,7 @@ class MainActivity : Activity() {
         window.statusBarColor = Color.rgb(157, 22, 40)
         window.navigationBarColor = Color.WHITE
         CookieManager.getInstance().setAcceptCookie(true)
+        registerSmsConsentReceiver()
 
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -92,6 +116,7 @@ class MainActivity : Activity() {
         controls.addView(panelButton("Save") { saveProfile() }, weightParams())
         controls.addView(panelButton("Fill page") { fillVisibleFields() }, weightParams())
         controls.addView(panelButton("Open site") { browser.loadUrl(IRCTC_URL) }, weightParams())
+        controls.addView(panelButton("OTP assist") { startOtpListening() }, weightParams())
         panel.addView(controls)
         root.addView(panel)
 
@@ -171,6 +196,60 @@ class MainActivity : Activity() {
         setOnClickListener { action() }
     }
 
+    private fun registerSmsConsentReceiver() {
+        val filter = IntentFilter(SmsRetriever.SMS_RETRIEVED_ACTION)
+        if (android.os.Build.VERSION.SDK_INT >= 33) {
+            registerReceiver(smsConsentReceiver, filter, Context.RECEIVER_EXPORTED)
+        } else {
+            @Suppress("DEPRECATION")
+            registerReceiver(smsConsentReceiver, filter)
+        }
+        smsReceiverRegistered = true
+    }
+
+    private fun startOtpListening() {
+        SmsRetriever.getClient(this).startSmsUserConsent(null)
+            .addOnSuccessListener {
+                Toast.makeText(this, "OTP listener active for up to 5 minutes. Approve the SMS prompt when it arrives.", Toast.LENGTH_LONG).show()
+            }
+            .addOnFailureListener {
+                Toast.makeText(this, "Could not start OTP assist. Please enter OTP manually.", Toast.LENGTH_LONG).show()
+            }
+    }
+
+    @Deprecated("Deprecated in Android API")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode != SMS_CONSENT_REQUEST || resultCode != RESULT_OK || data == null) return
+        val message = data.getStringExtra(SmsRetriever.EXTRA_SMS_MESSAGE).orEmpty()
+        val otp = Regex("(?<!\\d)\\d{4,8}(?!\\d)").find(message)?.value
+        if (otp.isNullOrBlank()) {
+            Toast.makeText(this, "No clear OTP found. Please enter it manually.", Toast.LENGTH_LONG).show()
+            return
+        }
+        val js = """
+            (function(value) {
+              var fields = Array.from(document.querySelectorAll('input'))
+                .filter(function(el) {
+                  if (el.disabled || el.readOnly || !el.offsetParent) return false;
+                  var k = ((el.name||'')+' '+(el.id||'')+' '+(el.placeholder||'')+' '+(el.getAttribute('aria-label')||'')+' '+(el.autocomplete||'')).toLowerCase();
+                  return /otp|one.?time|verification.?code/.test(k) || (el.maxLength >= 4 && el.maxLength <= 8 && /number|tel|text/.test(el.type));
+                });
+              if (!fields.length) return false;
+              var el = fields[0], proto = Object.getPrototypeOf(el), desc = Object.getOwnPropertyDescriptor(proto,'value');
+              if (desc && desc.set) desc.set.call(el,value); else el.value=value;
+              el.dispatchEvent(new Event('input',{bubbles:true}));
+              el.dispatchEvent(new Event('change',{bubbles:true}));
+              el.focus();
+              return true;
+            })(${JSONObject.quote(otp)});
+        """.trimIndent()
+        browser.evaluateJavascript(js) { result ->
+            val filled = result == "true"
+            Toast.makeText(this, if (filled) "OTP filled. Review and submit it yourself." else "OTP received with your approval, but no OTP field was found. Enter it manually.", Toast.LENGTH_LONG).show()
+        }
+    }
+
     private fun saveProfile() {
         prefs.edit()
             .putString("from", from.text.toString())
@@ -232,6 +311,10 @@ class MainActivity : Activity() {
     }
 
     override fun onDestroy() {
+        if (smsReceiverRegistered) {
+            try { unregisterReceiver(smsConsentReceiver) } catch (_: IllegalArgumentException) { }
+            smsReceiverRegistered = false
+        }
         if (::browser.isInitialized) browser.destroy()
         super.onDestroy()
     }
@@ -240,5 +323,6 @@ class MainActivity : Activity() {
 
     companion object {
         private const val IRCTC_URL = "https://www.irctc.co.in/nget/train-search"
+        private const val SMS_CONSENT_REQUEST = 4102
     }
 }
