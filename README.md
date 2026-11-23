@@ -33,3 +33,10 @@ The Android CI workflow uploads a debug APK after a successful build.
 - When a matching SMS arrives, Android shows a consent prompt. The user must approve it.
 - After approval, the app attempts to fill the visible OTP field only. It never submits the form.
 - CAPTCHA solving, OTP interception without consent, login bypass, and automated booking/payment are not supported.
+
+
+### CAPTCHA visual assistance
+- **CAPTCHA enhance** applies reversible contrast, grayscale, brightness and modest zoom styling to likely CAPTCHA images in the page.
+- **Reset images** restores their original appearance.
+- This is a local visual aid only. It does not perform OCR, solve, bypass, or submit CAPTCHA challenges. The user enters the answer manually.
+- It uses WebView image styling and adds no image-upload service or CAPTCHA-solving SDK.
