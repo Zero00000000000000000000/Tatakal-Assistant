@@ -11,8 +11,8 @@ android {
         applicationId = "com.tatkal.assistant"
         minSdk = 26
         targetSdk = 35
-        versionCode = 4
-        versionName = "0.4.0"
+        versionCode = 5
+        versionName = "0.5.0"
     }
 
     compileOptions {
@@ -24,5 +24,4 @@ android {
 
 dependencies {
     implementation("com.google.android.gms:play-services-auth-api-phone:18.2.0")
-    implementation("org.opencv:opencv:4.13.0")
 }
