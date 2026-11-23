@@ -35,15 +35,6 @@ The Android CI workflow uploads a debug APK after a successful build.
 - CAPTCHA solving, OTP interception without consent, login bypass, and automated booking/payment are not supported.
 
 
-### CAPTCHA visual assistance
-- **CAPTCHA enhance** applies reversible contrast, grayscale, brightness and modest zoom styling to likely CAPTCHA images in the page.
-- **Reset images** restores their original appearance.
-- This is a local visual aid only. It does not perform OCR, solve, bypass, or submit CAPTCHA challenges. The user enters the answer manually.
-- It uses WebView image styling and adds no image-upload service or CAPTCHA-solving SDK.
-
-
-### OpenCV CAPTCHA image enhancement
-- Uses the official OpenCV Android AAR from Maven Central (4.13.0).
-- Tap **OpenCV CAPTCHA** while a CAPTCHA image is visible. The app locates a likely image, captures its visible on-screen region, and processes the crop locally using CLAHE contrast enhancement in Lab color space.
-- A dialog shows enhanced and original previews. The image is not uploaded or saved.
-- This is visual assistance only: no OCR, answer extraction, CAPTCHA solving, bypass, or automatic form submission.
+### CAPTCHA handling
+- CAPTCHA images remain enabled and are displayed by the official IRCTC page.
+- The user reads and enters the CAPTCHA manually; the app does not process, solve, bypass, or submit CAPTCHA challenges.
